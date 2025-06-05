@@ -28,6 +28,9 @@ class BlockWorldAgent:
 
             if current_tuple == goal_tuple:
                 # self.step_trace.append({'state': self.tuple_to_state(current_tuple), 'move': None})
+                end_time = time.time()
+                run_time = end_time - start_time
+                # print(f"Test case solved in {run_time:.4f} seconds")
                 return path
 
             if current_tuple in visited:
@@ -39,7 +42,7 @@ class BlockWorldAgent:
 
             for move in moves:
                 self.push_move(current_state, move, g, path, visited, unexplored_state)
-
+        # print(f"No solution found (ran for {run_time:.4f} seconds)")
         return []
 
     def convert_to_hashable_state(self, state):
@@ -67,54 +70,62 @@ class BlockWorldAgent:
         return parent
 
     def heuristic(self, state):
+        penalty = 0  # Initialize total penalty score
+
         current_map = self.get_block_support_map(state)
         goal_map = self.get_block_support_map(self.goal_arrangement)
-        # print(goal_map)
-        mismatches = 0
-        for block in current_map:
-            current_parent = current_map[block]
-            goal_parent = goal_map.get(block)
-            if current_parent != goal_parent:
-                mismatches += 1
 
-        return mismatches
+        # Step 1: Compare block-on-block relationships
+        for block in current_map:
+            current_support = current_map[block]
+            goal_support = goal_map.get(block)
+
+            if current_support != goal_support:
+                penalty += 1
+
+        # Step 2: For each stack, check if it matches any goal stack prefix
+        for stack in state:
+            matched = False  # Assume the stack is incorrect
+
+            for goal_stack in self.goal_arrangement:
+                if self.stack_matches_goal_bottom(stack, goal_stack):
+                    matched = True
+                    break
+
+            if not matched:
+                penalty += len(stack)
+        return penalty
+
 
     def possible_moves(self, state):
-        valid_moves = []
-        goal_map = self.get_block_support_map(self.goal_arrangement)
+        valid_moves = [] 
+        goal_map =self.get_block_support_map(self.goal_arrangement)
 
-        # 获取堆顶积木 [(index, top_block)]
-        top_blocks = []
         for i, stack in enumerate(state):
-            if stack:
-                top_blocks.append((i, stack[-1]))
+            if len(stack) == 0:
+                continue # skip empty stacks
+# A block can be moved only if it is on top and no block aon it.
+            block = stack[-1]
+            # one option : put it on table
+            valid_moves.append((block, "Table"))
+# second option : move the block onto the top of another stack 
+            for target_index, target_stack in enumerate(state):
+                if i == target_index:
+                    continue # skip same stack
+                if len(target_stack) == 0:
+                    continue # skip empty stack
 
-        # 允许 move 的前缀堆判定函数
-        def is_prefix(stack, goal_stack):
-            return stack == goal_stack[:len(stack)]
-
-        # 建立目标堆列表
-        goal_stacks = self.goal_arrangement
-
-        for i, block in top_blocks:
-            # 桌面动作
-            if goal_map.get(block) == "Table":
-                valid_moves.append((block, "Table"))
-
-            # 目标结构堆叠动作（基于前缀结构匹配）
-            for j, target_stack in enumerate(state):
-                if i == j or not target_stack:
-                    continue
-
-                for goal_stack in goal_stacks:
-                    if is_prefix(target_stack, goal_stack):
-                        expected_parent = goal_map.get(block)
-                        if target_stack[-1] == expected_parent:
-                            valid_moves.append((block, target_stack[-1]))
-                        break  # 一旦匹配一个目标堆前缀就跳出
+                target_block = target_stack[-1]
+                valid_moves.append((block, target_block))
 
         return valid_moves
-
+    def stack_matches_goal_bottom(self, stack, goal_stack):
+        if len(stack) > len(goal_stack):
+            return False
+        for i in range(len(stack)):
+            if stack[i] != goal_stack[i]:
+                return False
+        return True
 
     def apply_move(self, state, move):
         block, destination = move
