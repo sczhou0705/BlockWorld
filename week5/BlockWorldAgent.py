@@ -1,173 +1,122 @@
-
-
 import heapq
-import copy
 import time
 
 class BlockWorldAgent:
     def solve(self, initial_arrangement, goal_arrangement):
         self.goal_arrangement = goal_arrangement
-        # self.step_trace = []  # To store each state and move for HTML output
+        self.goal_support_map = self.get_block_support_map(goal_arrangement)
 
-        initial_tuple = self.convert_to_hashable_state(initial_arrangement)
-        goal_tuple = self.convert_to_hashable_state(goal_arrangement)
-        # Initialize the priority queue
-        unexplored_state = []
-        # f = 0,g = 0,and an empty path 
-        heapq.heappush(unexplored_state, (0, 0, initial_tuple, []))
+        initial_list_state = [list(stack) for stack in initial_arrangement]
+        initial_tuple_state = self.convert_to_hashable_state(initial_list_state)
+
+        heap = []
+        heapq.heappush(heap, (0, 0, initial_tuple_state, initial_list_state, []))
         visited = set()
 
         start_time = time.time()
 
-        while len(unexplored_state) > 0:
-            elapsed_time = time.time() - start_time
-            if elapsed_time > 45:
+        while heap:
+            if time.time() - start_time > 45:
                 raise RuntimeError("Search exceeded 45 seconds runtime limit.")
 
-            f, g, current_tuple, path = heapq.heappop(unexplored_state)
+            f, g, tuple_state, list_state, path = heapq.heappop(heap)
 
-            if current_tuple == goal_tuple:
-                # self.step_trace.append({'state': self.tuple_to_state(current_tuple), 'move': None})
-                end_time = time.time()
-                run_time = end_time - start_time
-                # print(f"Test case solved in {run_time:.4f} seconds")
+            if tuple_state == self.convert_to_hashable_state(self.goal_arrangement):
+                print(time.time() - start_time)
                 return path
 
-            if current_tuple in visited:
+            if tuple_state in visited:
                 continue
-            visited.add(current_tuple)
+            visited.add(tuple_state)
 
-            current_state = self.convert_to_mutable_state(current_tuple)
-            moves = self.possible_moves(current_state)
+            for move in self.possible_moves(list_state):
+                self.push_move(list_state, tuple_state, move, g, path, visited, heap)
 
-            for move in moves:
-                self.push_move(current_state, move, g, path, visited, unexplored_state)
-        # print(f"No solution found (ran for {run_time:.4f} seconds)")
         return []
 
     def convert_to_hashable_state(self, state):
-        frozen_stacks = []
-        for stack in state:
-            frozen_stacks.append(tuple(stack))
-        return tuple(frozen_stacks)
-
-    def convert_to_mutable_state(self, state_tuple):
-        mutable_stacks = []
-        for stack in state_tuple:
-            mutable_stacks.append(list(stack))
-        return mutable_stacks
+        return tuple(tuple(stack) for stack in state)
 
     def get_block_support_map(self, state):
-        parent = {}
+        support = {}
         for stack in state:
             for i, block in enumerate(stack):
-                if i == 0:
-                    parent[block] = "Table"
-                else:
-                    parent[block] = stack[i - 1]
-                # print(f"{block} is on {parent[block]}") 
-      
-        return parent
+                support[block] = stack[i - 1] if i > 0 else "Table"
+        return support
 
     def heuristic(self, state):
-        penalty = 0  # Initialize total penalty score
-
+        h = 0
         current_map = self.get_block_support_map(state)
-        goal_map = self.get_block_support_map(self.goal_arrangement)
 
-        # Step 1: Compare block-on-block relationships
-        for block in current_map:
-            current_support = current_map[block]
-            goal_support = goal_map.get(block)
+        for block, support in current_map.items():
+            if self.goal_support_map.get(block) != support:
+                h += 1
 
-            if current_support != goal_support:
-                penalty += 1
-
-        # Step 2: For each stack, check if it matches any goal stack prefix
         for stack in state:
-            matched = False  # Assume the stack is incorrect
-
+            best_match = 0
             for goal_stack in self.goal_arrangement:
-                if self.stack_matches_goal_bottom(stack, goal_stack):
-                    matched = True
-                    break
+                match = 0
+                for a, b in zip(stack, goal_stack):
+                    if a == b:
+                        match += 1
+                    else:
+                        break
+                best_match = max(best_match, match)
+            h += len(stack) - best_match
 
-            if not matched:
-                penalty += len(stack)
-        return penalty
-
+        return h
 
     def possible_moves(self, state):
-        valid_moves = [] 
-        goal_map =self.get_block_support_map(self.goal_arrangement)
-
+        moves = []
         for i, stack in enumerate(state):
-            if len(stack) == 0:
-                continue # skip empty stacks
-# A block can be moved only if it is on top and no block aon it.
+            if not stack:
+                continue
             block = stack[-1]
-            # one option : put it on table
-            valid_moves.append((block, "Table"))
-# second option : move the block onto the top of another stack 
-            for target_index, target_stack in enumerate(state):
-                if i == target_index:
-                    continue # skip same stack
-                if len(target_stack) == 0:
-                    continue # skip empty stack
+            moves.append((block, "Table"))
+            for j, target in enumerate(state):
+                if i != j and target:
+                    moves.append((block, target[-1]))
+        return moves
 
-                target_block = target_stack[-1]
-                valid_moves.append((block, target_block))
+    def apply_move_efficient(self, list_state, move):
+        block, dest = move
 
-        return valid_moves
-    def stack_matches_goal_bottom(self, stack, goal_stack):
-        if len(stack) > len(goal_stack):
-            return False
-        for i in range(len(stack)):
-            if stack[i] != goal_stack[i]:
-                return False
-        return True
-
-    def apply_move(self, state, move):
-        block, destination = move
-
-        # shallow copy 
-        new_state = []
-        for stack in state:
-            copied_stack = stack[:]
-            new_state.append(copied_stack)
-
-    
-        source_index = None
-        for i, stack in enumerate(new_state):
+        # Identify source and target indices
+        source_index = target_index = None
+        for i, stack in enumerate(list_state):
             if stack and stack[-1] == block:
-                stack.pop()
-                if not stack:
-                    source_index = i 
-                break
-        if source_index is not None:
-            del new_state[source_index]
+                source_index = i
+            if stack and stack[-1] == dest:
+                target_index = i
+        if source_index is None:
+            raise ValueError("Invalid move: source not found")
 
-     
-        if destination == "Table":
-            new_state.append([block]) 
+        # Shallow copy state and affected stacks
+        new_state = list_state[:]
+        new_state[source_index] = new_state[source_index][:-1]
+
+        if not new_state[source_index]:
+            new_state = new_state[:source_index] + new_state[source_index+1:]
+            if target_index is not None and target_index > source_index:
+                target_index -= 1
+
+        if dest == "Table":
+            new_state.append([block])
         else:
-            for stack in new_state:
-                if stack and stack[-1] == destination:
-                    stack.append(block)
-                    break
+            new_target = new_state[target_index][:]  # Copy target stack
+            new_target.append(block)
+            new_state[target_index] = new_target
 
         return new_state
 
+    def push_move(self, current_list_state, current_tuple_state, move, g, path, visited, heap):
+        next_list_state = self.apply_move_efficient(current_list_state, move)
+        next_tuple_state = self.convert_to_hashable_state(next_list_state)
 
-    def push_move(self, current_state, move, g, path, visited, heap):
-        next_state = self.apply_move(current_state, move)
-        next_tuple = self.convert_to_hashable_state(next_state)
-
-        if next_tuple in visited:
+        if next_tuple_state in visited:
             return
-        else:
-                new_g = g + 1
-                h = self.heuristic(next_state)
-                new_f = new_g + h
-                new_path = path + [move]
-                heapq.heappush(heap, (new_f, new_g, next_tuple, new_path))
+
+        new_g = g + 1
+        h = self.heuristic(next_list_state)
+        f = new_g + h
+        heapq.heappush(heap, (f, new_g, next_tuple_state, next_list_state, path + [move]))
